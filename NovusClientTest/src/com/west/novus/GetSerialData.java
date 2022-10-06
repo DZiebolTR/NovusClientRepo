@@ -185,6 +185,7 @@ public class GetSerialData
 		GetSerialData currGSD = new GetSerialData();
 		try
 		{
+			System.out.println(currGSD.getClass().getName() + ".main() method entry!");
 			//			File currFile = new File("c:\\data\\FedAndDLUpd10DigitSerials.txt");
 			//			File currFile = new File("c:\\data\\FedAndDLUpd10DigitSerialsAddedSerials.txt");
 
