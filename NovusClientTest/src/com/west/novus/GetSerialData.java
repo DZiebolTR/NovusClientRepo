@@ -110,7 +110,7 @@ public class GetSerialData
 	private static String machVDHEInsertNullPubCodeQuery = "Insert into MACHV.DOC_HOSTING_ENV (HOST_ENV_CODE,DOC_UUID,LOADED_FLAG,LOADED_LOCATION,ADDED_DATE,PRISM_CLIP_DATE) values (?,?,?,?,?,?)";
 	private static String machVDHEDeleteQuery = "delete from machv.doc_hosting_env where doc_uuid = ?";
 	private static String machVDHEDeleteByCaseUuidQuery = "delete from machv.doc_hosting_env where doc_uuid in (select doc_uuid from machv.rendition_family_document where rf_uuid in (select rf_uuid from machv.rendition_family where case_uuid = ?))";
-
+	private static String machVExistingDocDataQuery = "select cite.citation_volume, cite.publication_code, cite.citation_page, dhe.doc_uuid, dhe.loaded_flag, dhe.loaded_location from machv.citation cite left join machv.rendition_family_document rfd on cite.rf_uuid = rfd.rf_uuid left join machv.doc_hosting_env dhe on rfd.doc_uuid = dhe.doc_uuid where cite.case_uuid = ? order by cite.publication_code desc";
 	
 	private static String machVDocInsertQuery = "Insert into MACHV.DOCUMENT (DOC_UUID,FORMAT,LANGUAGE,DOC_JMA_FLAG,CREATE_DATE) values (?,?,null,'N',null)";
 	private static String machVDocUpdateQuery = "Update MACHV.DOCUMENT SET DOC_UUID = ?, FORMAT = ? WHERE DOC_UUID = ?";
@@ -171,6 +171,12 @@ public class GetSerialData
 	boolean hasNovus = false; 
 	/**
 	 * @param args
+	 * When Main is ran - the file TestCaseUuidList.txt in c:\Data will be consumed.
+	 * for each caseUuid in the file, a request will be sent to Novus to pull the data contained in novus
+	 * PRE CHANGE data will be written to MachVAndNovusLoadData.txt
+	 * containing cite (vol:pubCode:page), docUuid, loadedFlag, loadedLocation 
+	 * So - if anything gets removed that shouldn't be - we can always revert back to the prechange.
+	 * if the NovusData contains star page info - the data will be written to StarpagedSerials.txt
 	 */
 	public static void main(String[] args)
 	{
@@ -243,12 +249,15 @@ public class GetSerialData
 				//nd = currGSD.reportThisSerialData(currentSerial);
 				nd = currGSD.reportThisSerialDataReEntrant(currentSerial);
 				int idx = currGSD.metadata.indexOf(STAR_PAGE);
+				String allMachVDocInfo = "";
 				boolean hasRfUuids = false;
 				if (idx != -1)
 					hasRfUuids = hasRfUuids(nd);
 				else
 					hasRfUuids = true;
 				System.out.println("idx=" + idx);
+				allMachVDocInfo = currGSD.getExistingMachVDocData(currentSerial);
+				System.out.println(allMachVDocInfo);
 //				if (currGSD.metadata.indexOf(STAR_PAGE) == -1)
 //				if ((idx == -1) && (hasRfUuids))
 				if (hasRfUuids)
@@ -278,13 +287,13 @@ public class GetSerialData
 								//								{
 								if (!currGSD.REPORT_NOT_ON_NOVUS_SERIALS_ONLY)
 								{
-									String machVLoadInfo = currGSD.getMachVLoadData(currNovusLoadInfo);
+									String machVNovusDocLoadInfo = currGSD.getMachVLoadData(currNovusLoadInfo);
 									//										preFixMachVLoadInfo += "Pre-Fix - " + currGSD.getMachVLoadData(currNovusLoadInfo) + crlf;
-									preFixMachVLoadInfo += "Pre-Fix - " + machVLoadInfo + crlf;
+									preFixMachVLoadInfo += "Pre-Fix - " + machVNovusDocLoadInfo + crlf;
 
 									if (!currGSD.REPORT_ONLY)// && (machVHasDoc(preFixMachVLoadInfo)))
 									{
-										currGSD.fixMachVLoadData(currNovusLoadInfo, machVLoadInfo, firstDoc);
+										currGSD.fixMachVLoadData(currNovusLoadInfo, machVNovusDocLoadInfo, firstDoc);
 										firstDoc = false;
 										postFixMachVLoadInfo += "Post-Fix - " + currGSD.getMachVLoadData(currNovusLoadInfo) + crlf;
 									}
@@ -315,7 +324,7 @@ public class GetSerialData
 						currGSD.writeToNoDocsLoaded(currentSerial);
 					}
 					if ((docCount >= 1) && (!currGSD.REPORT_ONLY))
-						currGSD.writeToReportFile(fullNovusLoadInfo, preFixMachVLoadInfo, postFixMachVLoadInfo, currentSerial);
+						currGSD.writeToReportFile(fullNovusLoadInfo, preFixMachVLoadInfo, postFixMachVLoadInfo, currentSerial, allMachVDocInfo);
 					//					}
 					// done report out only when more than two docs are on the serial
 					//					for (String currNovusLoadInfo : novusLoadInfoCollect)
@@ -379,6 +388,56 @@ public class GetSerialData
 
 	}
 	
+	private String getExistingMachVDocData(String currentSerial)
+	{
+		String retStr = "";
+		//String docUuid = this.getDocUuidFromNouvsLoadData(novusLoadData);
+//		private static String machVDHEQuery = "select host_env_code, loaded_location, prism_clip_date, publication_Code from machv.doc_hosting_env where doc_uuid = ?";
+
+		String novusLoadLoc = "";
+		String wlLoadLoc = "";
+		Date clipDateVal = null;
+		int pubCode = 0;
+		try
+		{
+//			if (this.pStmt == null)
+				this.pStmt = this.con.prepareStatement(GetSerialData.machVExistingDocDataQuery);
+			this.pStmt.setString(1, currentSerial);
+			ResultSet rs = this.pStmt.executeQuery();
+			boolean docExists = false;
+			while (rs.next())
+			{
+				// vol
+				String vol = rs.getString(1);
+				// pub code
+				int pCode = rs.getInt(2);
+				String spubCode = new Integer(pCode).toString();
+				// page
+				String page = rs.getString(3); 
+				// docUuid
+				String docUuid = rs.getString(4);
+				// loadedFlag
+				String loadedFlag = rs.getString(5);
+				// loadedLocation
+				String loadedLoc = rs.getString(6);
+
+				retStr += vol + ":" + spubCode + ":" + page + " docUuid:" + docUuid + " loaded:" + loadedFlag + " loadedLoc:" + loadedLoc + crlf;
+			}
+			//MachV has Document uuid:I526280eef5a011d9bf60c1d57ebc853e is loaded to:w_cs_waor1 component:WORWA prismClipDate:19991203000000 pubCode:800
+			this.closeResources(this.pStmt, rs, null); 
+		}
+		catch (SQLException e)
+		{
+			e.printStackTrace();
+			String msg = this.getClass().getName() + "." + "getExistingMachVDocData()" + " encountered:" + e.getClass().getName() + 
+					" with msg=" + e.getMessage();
+			if (e.getCause() != null)
+				msg += " with cause=" + e.getCause().getClass().getName() + " with cause msg=" +  e.getCause().getMessage();
+			System.out.println(msg);
+		}
+		return retStr;
+	}
+
 	private synchronized static boolean hasRfUuids(NovusData nd)
 	{
 		boolean retVal = false;
@@ -2227,7 +2286,7 @@ public class GetSerialData
 	}
 	private static String NO_NOVUS_DOCS = "Novus has No Novus Docs Returned!Can't query MachV without a docUuid from Novus";
 	private static String TERSE_NO_NOVUS_DOCS  = "No Novus Docs Returned!";
-	public void writeToReportFile(String novusLoadInfo, String preFixMachVLoadInfo, String postFixMachVLoadInfo, String serialNum)
+	public void writeToReportFile(String novusLoadInfo, String preFixMachVLoadInfo, String postFixMachVLoadInfo, String serialNum, String existingMachVData)
 	{
 		// for serialNum = serialNum
 		//Nouvs has Document uuid:I526280eef5a011d9bf60c1d57ebc853e is loaded to:w_cs_waor1 component:WORWA prismClipDate:19991203000000 pubCode:800
@@ -2240,6 +2299,7 @@ public class GetSerialData
 				novusLoadInfo = NO_NOVUS_DOCS;
 		
 		String reportLine = crlf + "For serialNumber:" + serialNum + crlf;
+		reportLine += " Pre any change - MachV had the following data:" + crlf + existingMachVData;
 		reportLine += "Novus has " + novusLoadInfo + crlf;
 		reportLine += preFixMachVLoadInfo;
 		if (!REPORT_ONLY)
